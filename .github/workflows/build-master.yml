@@ -94,12 +94,35 @@ jobs:
           echo "Upstream SHA: ${SHORT_SHA}"
           echo "Tags:        ${TAGS_CLI}"
 
+      - name: Patch Dockerfile to clone from this fork (not apache upstream)
+        run: |
+          # contrib/docker/ubuntu/noble/Dockerfile clones source from
+          # apache/trafficserver. We rewrite it to clone from this fork so
+          # any local commits on fork master (or feature branches) are
+          # actually built. Without this, sync-upstream.yml is pointless --
+          # the build would always reflect apache upstream, not our fork.
+          sed -i \
+            -e "s|https://github.com/apache/trafficserver.git|https://github.com/${{ github.repository }}.git|" \
+            contrib/docker/ubuntu/noble/Dockerfile
+          echo "Patched origin URL to: https://github.com/${{ github.repository }}.git"
+          grep "git clone --depth 1 -b" contrib/docker/ubuntu/noble/Dockerfile || true
+
       - name: Set up QEMU
         if: contains(steps.params.outputs.platforms, 'arm64')
         uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+        with:
+          # jp host runs dnsmasq with /etc/hosts entries that map
+          # archive.ubuntu.com / security.ubuntu.com to the ATS LB IP
+          # (legacy transparent re-routing). Current ATS deploy only accepts
+          # *.mirrors.cluster.local, so the build container's apt update hits
+          # ATS and gets 404. Tell buildkit's own container to use upstream
+          # DNS (1.1.1.1) directly, bypassing jp host's dnsmasq override.
+          buildkitd-config-inline: |
+            [dns]
+              nameservers = ["1.1.1.1", "8.8.8.8"]
         # Optionally use a local buildkit image that has harbor.tue.jp mirror
         # config baked in (massive speed-up on github/cloudflare cache hits):
         #   driver-opts: image=local/buildkit-harbor:latest
