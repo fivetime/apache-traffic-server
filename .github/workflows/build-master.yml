@@ -78,23 +78,17 @@ jobs:
           #   <version>                 floating (always latest build of this ref)
           #   <version>-<YYYYMMDD>      date-pinned (immutable per day)
           #   <version>-<short-sha>     content-pinned (when ats_version is a branch)
-          TAGS=( "-t" "${REGISTRY}/${IMAGE_NAME}:${SAFE_VERSION}" )
-          TAGS+=( "-t" "${REGISTRY}/${IMAGE_NAME}:${SAFE_VERSION}-${DATE_TAG}" )
+          TAGS_CLI="-t ${REGISTRY}/${IMAGE_NAME}:${SAFE_VERSION}"
+          TAGS_CLI="${TAGS_CLI} -t ${REGISTRY}/${IMAGE_NAME}:${SAFE_VERSION}-${DATE_TAG}"
           if [ "${SHORT_SHA}" != "unknown" ] && [ -n "${SHORT_SHA}" ]; then
-            TAGS+=( "-t" "${REGISTRY}/${IMAGE_NAME}:${SAFE_VERSION}-${SHORT_SHA}" )
+            TAGS_CLI="${TAGS_CLI} -t ${REGISTRY}/${IMAGE_NAME}:${SAFE_VERSION}-${SHORT_SHA}"
           fi
-          # GitHub Actions multi-line output via heredoc-style:
-          {
-            echo "tags_cli<<EOF"
-            printf "%s " "${TAGS[@]}"
-            echo
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          echo "tags_cli=${TAGS_CLI}" >> "$GITHUB_OUTPUT"
 
           echo "ATS version: ${ATS_VERSION}"
           echo "Platforms:   ${PLATFORMS}"
           echo "Upstream SHA: ${SHORT_SHA}"
-          echo "Tags:        ${TAGS[*]}"
+          echo "Tags:        ${TAGS_CLI}"
 
       - name: Set up QEMU
         if: contains(steps.params.outputs.platforms, 'arm64')
@@ -151,7 +145,8 @@ jobs:
             echo ""
             echo "### Tags"
             echo "\`\`\`"
-            echo "${{ steps.params.outputs.tags_cli }}" | tr ' ' '\n' | grep -v '^-t$' | grep -v '^$'
+            # tags_cli is "-t URL1 -t URL2 -t URL3"; show one URL per line.
+            echo "${{ steps.params.outputs.tags_cli }}" | sed 's/ -t /\n/g; s/^-t //'
             echo "\`\`\`"
             echo ""
             echo "### Pull"
