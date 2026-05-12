@@ -57,7 +57,6 @@ jobs:
           ATS_VERSION="${ATS_VERSION:-master}"
           PLATFORMS="${PLATFORMS:-linux/amd64}"
 
-          DATE_TAG="$(date -u +%Y%m%d)"
           # ls-remote may return multiple refs (e.g. refs/heads/master AND
           # refs/remotes/github/master from apache's push mirror). Take only the
           # first to avoid multi-line SHORT_SHA breaking GITHUB_OUTPUT parsing.
@@ -74,16 +73,15 @@ jobs:
             echo "ats_version=${ATS_VERSION}"
             echo "platforms=${PLATFORMS}"
             echo "safe_version=${SAFE_VERSION}"
-            echo "date_tag=${DATE_TAG}"
             echo "short_sha=${SHORT_SHA}"
           } >> "$GITHUB_OUTPUT"
 
           # Tags:
-          #   <version>                 floating (always latest build of this ref)
-          #   <version>-<YYYYMMDD>      date-pinned (immutable per day)
-          #   <version>-<short-sha>     content-pinned (when ats_version is a branch)
+          #   <version>             floating (always latest build of this ref)
+          #   <version>-<short-sha> content-pinned (immutable, rollback target)
+          # 不打 date tag —— master 一天可能有 0 或多个上游 commit，date 既不
+          # 精确也无新信息（SHA 已完全覆盖）。
           TAGS_CLI="-t ${REGISTRY}/${IMAGE_NAME}:${SAFE_VERSION}"
-          TAGS_CLI="${TAGS_CLI} -t ${REGISTRY}/${IMAGE_NAME}:${SAFE_VERSION}-${DATE_TAG}"
           if [ "${SHORT_SHA}" != "unknown" ] && [ -n "${SHORT_SHA}" ]; then
             TAGS_CLI="${TAGS_CLI} -t ${REGISTRY}/${IMAGE_NAME}:${SAFE_VERSION}-${SHORT_SHA}"
           fi
