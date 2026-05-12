@@ -97,14 +97,16 @@ jobs:
       - name: Patch Dockerfile to clone from this fork (not apache upstream)
         run: |
           # contrib/docker/ubuntu/noble/Dockerfile clones source from
-          # apache/trafficserver. We rewrite it to clone from this fork so
-          # any local commits on fork master (or feature branches) are
-          # actually built. Without this, sync-upstream.yml is pointless --
-          # the build would always reflect apache upstream, not our fork.
+          # apache/trafficserver into a directory called 'trafficserver' (git
+          # default = repo basename without .git). Subsequent cmake line uses
+          # '-Strafficserver'. Our fork's basename is 'apache-traffic-server'
+          # which would create a different directory and break the cmake -S
+          # path. So we both rewrite the URL AND append an explicit target
+          # directory 'trafficserver' to keep cmake -S valid.
           sed -i \
-            -e "s|https://github.com/apache/trafficserver.git|https://github.com/${{ github.repository }}.git|" \
+            -e "s|https://github.com/apache/trafficserver.git|https://github.com/${{ github.repository }}.git trafficserver|" \
             contrib/docker/ubuntu/noble/Dockerfile
-          echo "Patched origin URL to: https://github.com/${{ github.repository }}.git"
+          echo "Patched clone line:"
           grep "git clone --depth 1 -b" contrib/docker/ubuntu/noble/Dockerfile || true
 
       - name: Set up QEMU
