@@ -1,0 +1,161 @@
+name: Build ATS master
+
+on:
+  schedule:
+    # Daily at 03:00 UTC -- 2h after sync-upstream so any pulled-in
+    # changes are already on master before we build.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      ats_version:
+        description: "ATS version: any git ref accepted by 'git clone -b' (branch / tag / commit SHA). Default master."
+        default: "master"
+      platforms:
+        description: "Target platforms (comma-separated). amd64 only by default; arm64 via QEMU is ~6-10x slower."
+        default: "linux/amd64"
+      push:
+        description: "Push to registry (uncheck for dry-run / local test)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/apache-traffic-server
+
+# Only one master build at a time. Cancel earlier in-progress runs --
+# we always want the latest master HEAD, not whatever was queued.
+concurrency:
+  group: build-master-${{ github.event.inputs.ats_version || 'master' }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: self-hosted
+    # ATS + BoringSSL + Quiche + nghttp2/3 + ngtcp2 + curl full stack.
+    # On 64-core jp runner: typically 5-10 min for amd64-only. Multi-arch
+    # via QEMU can push past 60 min, so be generous.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Dockerfile clones ATS source from GitHub directly inside the
+          # build; we only need contrib/docker/ubuntu/noble/Dockerfile
+          # from this checkout. Shallow clone is fine.
+          fetch-depth: 1
+
+      - name: Resolve build parameters
+        id: params
+        run: |
+          set -euo pipefail
+          ATS_VERSION="${{ inputs.ats_version }}"
+          PLATFORMS="${{ inputs.platforms }}"
+          # workflow_dispatch inputs are empty on schedule trigger -- fall back to defaults.
+          ATS_VERSION="${ATS_VERSION:-master}"
+          PLATFORMS="${PLATFORMS:-linux/amd64}"
+
+          DATE_TAG="$(date -u +%Y%m%d)"
+          SHORT_SHA="$(git ls-remote https://github.com/apache/trafficserver.git "${ATS_VERSION}" \
+                       | awk '{print substr($1,1,10)}' \
+                       || echo unknown)"
+
+          # Sanitize for use in a docker tag: replace any '/' (e.g. branch
+          # names like '10.1.x' are fine, but commit ref 'pulls/foo' isn't).
+          SAFE_VERSION="$(echo "${ATS_VERSION}" | tr '/' '-')"
+
+          {
+            echo "ats_version=${ATS_VERSION}"
+            echo "platforms=${PLATFORMS}"
+            echo "safe_version=${SAFE_VERSION}"
+            echo "date_tag=${DATE_TAG}"
+            echo "short_sha=${SHORT_SHA}"
+          } >> "$GITHUB_OUTPUT"
+
+          # Tags:
+          #   <version>                 floating (always latest build of this ref)
+          #   <version>-<YYYYMMDD>      date-pinned (immutable per day)
+          #   <version>-<short-sha>     content-pinned (when ats_version is a branch)
+          TAGS=( "-t" "${REGISTRY}/${IMAGE_NAME}:${SAFE_VERSION}" )
+          TAGS+=( "-t" "${REGISTRY}/${IMAGE_NAME}:${SAFE_VERSION}-${DATE_TAG}" )
+          if [ "${SHORT_SHA}" != "unknown" ] && [ -n "${SHORT_SHA}" ]; then
+            TAGS+=( "-t" "${REGISTRY}/${IMAGE_NAME}:${SAFE_VERSION}-${SHORT_SHA}" )
+          fi
+          # GitHub Actions multi-line output via heredoc-style:
+          {
+            echo "tags_cli<<EOF"
+            printf "%s " "${TAGS[@]}"
+            echo
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "ATS version: ${ATS_VERSION}"
+          echo "Platforms:   ${PLATFORMS}"
+          echo "Upstream SHA: ${SHORT_SHA}"
+          echo "Tags:        ${TAGS[*]}"
+
+      - name: Set up QEMU
+        if: contains(steps.params.outputs.platforms, 'arm64')
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        # Optionally use a local buildkit image that has harbor.tue.jp mirror
+        # config baked in (massive speed-up on github/cloudflare cache hits):
+        #   driver-opts: image=local/buildkit-harbor:latest
+
+      - name: Log in to GHCR
+        if: ${{ inputs.push != 'false' }}
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (and push) ATS ${{ steps.params.outputs.ats_version }}
+        run: |
+          set -euo pipefail
+          PUSH_FLAG=""
+          if [ "${{ inputs.push }}" != "false" ]; then
+            PUSH_FLAG="--push"
+          fi
+
+          # shellcheck disable=SC2086  # we want word-splitting on $TAGS
+          docker buildx build contrib/docker/ubuntu/noble \
+            --platform "${{ steps.params.outputs.platforms }}" \
+            --build-arg "ATS_VERSION=${{ steps.params.outputs.ats_version }}" \
+            ${{ steps.params.outputs.tags_cli }} \
+            --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            --label "org.opencontainers.image.version=${{ steps.params.outputs.ats_version }}" \
+            --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --label "org.opencontainers.image.url=https://github.com/${{ github.repository }}" \
+            --label "ats.upstream.sha=${{ steps.params.outputs.short_sha }}" \
+            --provenance=false \
+            $PUSH_FLAG
+
+      - name: Summary
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo "## ATS image build"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| ATS version | \`${{ steps.params.outputs.ats_version }}\` |"
+            echo "| Upstream SHA | \`${{ steps.params.outputs.short_sha }}\` |"
+            echo "| Platforms | \`${{ steps.params.outputs.platforms }}\` |"
+            echo "| Pushed | \`${{ inputs.push != 'false' }}\` |"
+            echo ""
+            echo "### Tags"
+            echo "\`\`\`"
+            echo "${{ steps.params.outputs.tags_cli }}" | tr ' ' '\n' | grep -v '^-t$' | grep -v '^$'
+            echo "\`\`\`"
+            echo ""
+            echo "### Pull"
+            echo "\`\`\`bash"
+            echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.params.outputs.safe_version }}"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
