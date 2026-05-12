@@ -58,9 +58,13 @@ jobs:
           PLATFORMS="${PLATFORMS:-linux/amd64}"
 
           DATE_TAG="$(date -u +%Y%m%d)"
-          SHORT_SHA="$(git ls-remote https://github.com/apache/trafficserver.git "${ATS_VERSION}" \
-                       | awk '{print substr($1,1,10)}' \
-                       || echo unknown)"
+          # ls-remote may return multiple refs (e.g. refs/heads/master AND
+          # refs/remotes/github/master from apache's push mirror). Take only the
+          # first to avoid multi-line SHORT_SHA breaking GITHUB_OUTPUT parsing.
+          SHORT_SHA="$(git ls-remote https://github.com/apache/trafficserver.git "${ATS_VERSION}" 2>/dev/null \
+                       | head -n1 \
+                       | awk '{print substr($1,1,10)}')"
+          SHORT_SHA="${SHORT_SHA:-unknown}"
 
           # Sanitize for use in a docker tag: replace any '/' (e.g. branch
           # names like '10.1.x' are fine, but commit ref 'pulls/foo' isn't).
