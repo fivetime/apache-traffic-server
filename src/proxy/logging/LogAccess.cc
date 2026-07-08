@@ -470,22 +470,25 @@ LogAccess::marshal_custom_field(char *buf, LogField::Type type, const LogField::
   void *sm = m_data->http_sm_for_plugins();
   if (sm == nullptr) {
     switch (type) {
-    case LogField::sINT:
-    case LogField::dINT:
+    case LogField::Type::sINT:
+      [[fallthrough]];
+    case LogField::Type::dINT:
       if (buf) {
         marshal_int(buf, 0);
       }
       return INK_MIN_ALIGN;
-    case LogField::STRING: {
+    case LogField::Type::STRING: {
       int len = LogAccess::padded_strlen(nullptr);
       if (buf) {
         marshal_str(buf, nullptr, len);
       }
       return len;
     }
-    case LogField::IP:
+    case LogField::Type::IP:
       return marshal_ip(buf, nullptr);
-    case LogField::N_TYPES:
+    case LogField::Type::N_TYPES:
+      [[fallthrough]];
+    case LogField::Type::INVALID:
       break;
     }
   }
@@ -2279,6 +2282,15 @@ LogAccess::marshal_client_req_ssl_reused(char *buf)
   if (buf) {
     int64_t val = m_data->get_client_ssl_reused() ? 1 : 0;
     marshal_int(buf, val);
+  }
+  return INK_MIN_ALIGN;
+}
+
+int
+LogAccess::marshal_client_ssl_resumption_type(char *buf)
+{
+  if (buf) {
+    marshal_int(buf, m_data->get_client_ssl_resumption_type());
   }
   return INK_MIN_ALIGN;
 }

@@ -540,28 +540,6 @@ update_cache_control_information_from_config(HttpTransact::State *s)
   }
 }
 
-bool
-HttpTransact::is_server_negative_cached(State *s)
-{
-  if (s->dns_info.active && s->dns_info.active->last_fail_time() != TS_TIME_ZERO &&
-      s->dns_info.active->last_fail_time() + s->txn_conf->down_server_timeout > ts_clock::from_time_t(s->client_request_time)) {
-    return true;
-  } else {
-    // Make sure some nasty clock skew has not happened
-    //  Use the server timeout to set an upperbound as to how far in the
-    //   future we should tolerate bogus last failure times.  This sets
-    //   the upper bound to the time that we would ever consider a server
-    //   down to 2*down_server_timeout
-    if (s->dns_info.active &&
-        ts_clock::from_time_t(s->client_request_time) + s->txn_conf->down_server_timeout < s->dns_info.active->last_fail_time()) {
-      s->dns_info.active->mark_up();
-      ink_assert(!"extreme clock skew");
-      return true;
-    }
-    return false;
-  }
-}
-
 /**
   ATS has two configuration options controlling how many times it retries a connection attempt against origin servers.
 
@@ -3565,14 +3543,9 @@ HttpTransact::set_cache_prepare_write_action_for_new_request(State *s)
   // This method must be called no more than one time per request. It should
   // not be called for non-cacheable requests.
   if (s->cache_info.write_lock_state == CacheWriteLock_t::SUCCESS) {
-    // If and only if this is a redirected request, we may have already
-    // prepared a cache write (during the handling of the previous request
-    // which got the 3xx response) and can safely re-use it. Otherwise, we
-    // risk storing the response under the wrong cache key. This is a release
-    // assert because the correct behavior would be to prepare a new write,
-    // but we can't do that because we failed to release the lock. To recover
-    // we would have to tell the state machine to abort its write, and we
-    // don't have a state for that.
+    // If and only if this is a redirected request, we may have already prepared
+    // a cache write during the handling of the previous request and can re-use
+    // it. Otherwise, we risk storing the response under the wrong cache key.
     ink_release_assert(s->redirect_info.redirect_in_process);
     s->cache_info.action = CacheAction_t::WRITE;
   } else if (s->cache_info.write_lock_state == CacheWriteLock_t::READ_RETRY &&
