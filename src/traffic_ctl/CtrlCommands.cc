@@ -22,12 +22,13 @@
 
 #include <algorithm>
 #include <cctype>
+#include <csignal>
 #include <fstream>
 #include <unordered_map>
 #include <chrono>
 #include <iomanip>
+#include <utility>
 #include <thread>
-#include <csignal>
 #include <unistd.h>
 
 #include <swoc/TextView.h>
@@ -306,7 +307,7 @@ ConfigCommand::config_status()
       {"error",   DL_Error  },
     };
 
-    std::string lowered{min_level};
+    std::string lowered{std::move(min_level)};
     std::transform(lowered.begin(), lowered.end(), lowered.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
@@ -736,6 +737,26 @@ ConfigCommand::config_show_file_registry()
   _printer->write_output(invoke_rpc(ConfigShowFileRegistryRequest{}));
 }
 //------------------------------------------------------------------------------------------------------------------------------------
+CacheCommand::CacheCommand(ts::Arguments *args) : CtrlCommand(args)
+{
+  auto printOpts = parse_print_opts(args);
+
+  if (get_parsed_arguments()->get(CLEAR_STR)) {
+    _printer      = std::make_unique<GenericPrinter>(printOpts);
+    _invoked_func = [&]() { clear(); };
+  }
+}
+
+void
+CacheCommand::clear()
+{
+  CacheClearRequest request;
+
+  auto response = invoke_rpc(request);
+
+  _printer->write_output(response);
+}
+//------------------------------------------------------------------------------------------------------------------------------------
 MetricCommand::MetricCommand(ts::Arguments *args) : RecordCommand(args)
 {
   BasePrinter::Options printOpts{parse_print_opts(args)};
@@ -942,7 +963,7 @@ HostDBCommand::status_get()
     };
   }
 
-  HostDBGetStatusRequest request{params};
+  HostDBGetStatusRequest request{std::move(params)};
 
   auto response = invoke_rpc(request);
 

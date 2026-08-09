@@ -277,6 +277,7 @@ struct LoggingPreprocContinuation : public Continuation {
   mainEvent(int /* event ATS_UNUSED */, void * /* data ATS_UNUSED */)
   {
     Log::preproc_thread_main((void *)&m_idx);
+    delete this;
     return 0;
   }
 
@@ -293,6 +294,7 @@ struct LoggingFlushContinuation : public Continuation {
   mainEvent(int /* event ATS_UNUSED */, void * /* data ATS_UNUSED */)
   {
     Log::flush_thread_main((void *)&m_idx);
+    delete this;
     return 0;
   }
 
@@ -1240,7 +1242,11 @@ void
 Log::create_threads()
 {
   char desc[64];
-  preproc_notify = new EventNotify[preproc_threads];
+  preproc_notify  = new EventNotify[preproc_threads];
+  flush_notify    = new EventNotify;
+  flush_data_list = new InkAtomicList;
+
+  ink_atomiclist_init(flush_data_list, "Logging flush buffer list", 0);
 
   size_t stacksize;
   stacksize = RecGetRecordInt("proxy.config.thread.default.stacksize").value_or(0);
@@ -1259,10 +1265,6 @@ Log::create_threads()
   // TODO: Enable multiple flush threads, such as
   //       one flush thread per file.
   //
-  flush_notify    = new EventNotify;
-  flush_data_list = new InkAtomicList;
-
-  ink_atomiclist_init(flush_data_list, "Logging flush buffer list", 0);
   Continuation *flush_cont = new LoggingFlushContinuation(0);
   eventProcessor.spawn_thread(flush_cont, "[LOG_FLUSH]", stacksize);
 }
