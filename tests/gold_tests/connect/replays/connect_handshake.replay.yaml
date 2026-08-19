@@ -1,6 +1,3 @@
-"""
-Test child proxy serving stale content when parents are exhausted
-"""
 #  Licensed to the Apache Software Foundation (ASF) under one
 #  or more contributor license agreements.  See the NOTICE file
 #  distributed with this work for additional information
@@ -17,14 +14,21 @@ Test child proxy serving stale content when parents are exhausted
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-Test.testName = "proxy_serve_stale"
-Test.ContinueOnFail = True
+meta:
+  version: '1.0'
 
-# Verify that stale content is served when the parent is down.
-Test.ATSReplayTest(replay_file="replay/proxy_serve_stale.replay.yaml")
+sessions:
+  - transactions:
+      - client-request:
+          method: CONNECT
+          version: '1.1'
+          url: www.example.com:443
+          headers:
+            fields:
+              - [Host, www.example.com:443]
+              - [uuid, connect-refused]
 
-# Verify that stale content respects the percentage maximum stale age.
-Test.ATSReplayTest(replay_file="replay/max_stale_age_percent.replay.yaml")
-
-# Verify that stale content is served when the origin server is down.
-Test.ATSReplayTest(replay_file="replay/proxy_serve_stale_origin_down.replay.yaml")
+        # ATS must report the refused origin connection rather than claim the
+        # tunnel was established.
+        proxy-response:
+          status: 502

@@ -1,6 +1,4 @@
-"""
-Test child proxy serving stale content when parents are exhausted
-"""
+'''Verify an HTTP/2 stream reset does not stop the session from reading.'''
 #  Licensed to the Apache Software Foundation (ASF) under one
 #  or more contributor license agreements.  See the NOTICE file
 #  distributed with this work for additional information
@@ -17,14 +15,9 @@ Test child proxy serving stale content when parents are exhausted
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-Test.testName = "proxy_serve_stale"
-Test.ContinueOnFail = True
+Test.Summary = __doc__
 
-# Verify that stale content is served when the parent is down.
-Test.ATSReplayTest(replay_file="replay/proxy_serve_stale.replay.yaml")
+Test.SkipUnless(
+    Condition.HasOpenSSLVersion('1.1.1'), Condition.HasProxyVerifierVersion('2.8.0'), Condition.PluginExists('null_transform.so'))
 
-# Verify that stale content respects the percentage maximum stale age.
-Test.ATSReplayTest(replay_file="replay/max_stale_age_percent.replay.yaml")
-
-# Verify that stale content is served when the origin server is down.
-Test.ATSReplayTest(replay_file="replay/proxy_serve_stale_origin_down.replay.yaml")
+Test.ATSReplayTest(replay_file="replay/http2_client_reset_keeps_session_reading.replay.yaml")
