@@ -7339,6 +7339,10 @@ _memberp_to_generic(MgmtFloat *ptr, MgmtConverter const *&conv) -> typename std:
   case TS_CONFIG_##KEY: ret = &overridableHttpConfig->MEMBER; conv = &ConnectionTracker::MAX_SERVER_CONV; break;
 #define _CONF_CASE_ConnectionTracker_SERVER_MATCH_CONV(KEY, MEMBER)             \
   case TS_CONFIG_##KEY: ret = &overridableHttpConfig->MEMBER; conv = &ConnectionTracker::SERVER_MATCH_CONV; break;
+#define _CONF_CASE_ConnectionTracker_METRIC_ENABLED_CONV(KEY, MEMBER)           \
+  case TS_CONFIG_##KEY: ret = &overridableHttpConfig->MEMBER; conv = &ConnectionTracker::METRIC_ENABLED_CONV; break;
+#define _CONF_CASE_ConnectionTracker_METRIC_AGGREGATE_CONV(KEY, MEMBER)         \
+  case TS_CONFIG_##KEY: ret = &overridableHttpConfig->MEMBER; conv = &ConnectionTracker::METRIC_AGGREGATE_CONV; break;
 
 // Custom converter: Parses/formats host resolution preference strings.
 #define _CONF_CASE_HttpTransact_HOST_RES_CONV(KEY, MEMBER)                      \
@@ -7397,6 +7401,8 @@ _conf_to_memberp(TSOverridableConfigKey conf, OverridableHttpConfigParams *overr
 #undef _CONF_CASE_ConnectionTracker_MIN_SERVER_CONV
 #undef _CONF_CASE_ConnectionTracker_MAX_SERVER_CONV
 #undef _CONF_CASE_ConnectionTracker_SERVER_MATCH_CONV
+#undef _CONF_CASE_ConnectionTracker_METRIC_ENABLED_CONV
+#undef _CONF_CASE_ConnectionTracker_METRIC_AGGREGATE_CONV
 #undef _CONF_CASE_HttpTransact_HOST_RES_CONV
 #undef _CONF_CASE_TargetedCacheControlHeaders_Conv
 #undef _CONF_CASE_DISPATCH
@@ -7774,13 +7780,23 @@ TSHttpTxnCloseAfterResponse(TSHttpTxn txnp, int should_close)
   return TS_SUCCESS;
 }
 
+namespace
+{
+bool
+is_usable_port_descriptor(const HttpProxyPort *port)
+{
+  return port != nullptr &&
+         (port->m_family == AF_UNIX || ((port->m_family == AF_INET || port->m_family == AF_INET6) && port->m_port != 0));
+}
+} // namespace
+
 // Parse a port descriptor for the proxy.config.http.server_ports descriptor format.
 TSPortDescriptor
 TSPortDescriptorParse(const char *descriptor)
 {
-  HttpProxyPort *port = new HttpProxyPort();
+  auto *port = new HttpProxyPort();
 
-  if (descriptor && port->processOptions(descriptor)) {
+  if (descriptor != nullptr && port->processOptions(descriptor) && is_usable_port_descriptor(port)) {
     return reinterpret_cast<TSPortDescriptor>(port);
   }
 
@@ -7791,8 +7807,17 @@ TSPortDescriptorParse(const char *descriptor)
 TSReturnCode
 TSPortDescriptorAccept(TSPortDescriptor descp, TSCont contp)
 {
+  if (descp == nullptr || contp == nullptr) {
+    return TS_ERROR;
+  }
+
+  const auto *port = reinterpret_cast<const HttpProxyPort *>(descp);
+
+  if (!is_usable_port_descriptor(port)) {
+    return TS_ERROR;
+  }
+
   Action                     *action = nullptr;
-  HttpProxyPort              *port   = reinterpret_cast<HttpProxyPort *>(descp);
   NetProcessor::AcceptOptions net(make_net_accept_options(port, -1 /* nthreads */));
 
   if (port->isSSL()) {
@@ -7802,6 +7827,12 @@ TSPortDescriptorAccept(TSPortDescriptor descp, TSCont contp)
   }
 
   return action ? TS_SUCCESS : TS_ERROR;
+}
+
+void
+TSPortDescriptorDestroy(TSPortDescriptor descp)
+{
+  delete reinterpret_cast<HttpProxyPort *>(descp);
 }
 
 TSReturnCode
@@ -8335,7 +8366,7 @@ TSSslServerCertUpdate(const char *cert_path, const char *key_path)
         return TS_ERROR;
       }
       // Atomic Swap
-      cc->setCtx(test_ctx);
+      cc->setCtx(std::move(test_ctx));
       return TS_SUCCESS;
     }
   }
@@ -8935,7 +8966,7 @@ TSRPCHandlerDone(TSYaml resp)
 {
   Dbg(dbg_ctl_rpc_api, ">> Handler seems to be done");
   std::lock_guard<std::mutex> lock(::rpc::g_rpcHandlingMutex);
-  auto                        data       = *reinterpret_cast<YAML::Node *>(resp);
+  auto const                 &data       = *reinterpret_cast<YAML::Node const *>(resp);
   ::rpc::g_rpcHandlerResponseData        = data;
   ::rpc::g_rpcHandlerProcessingCompleted = true;
   ::rpc::g_rpcHandlingCompletion.notify_one();
