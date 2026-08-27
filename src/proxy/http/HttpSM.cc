@@ -439,10 +439,10 @@ HttpSM::attach_client_session(ProxyTransaction *txn)
   t_state.api_skip_all_remapping = netvc->get_is_unmanaged_request();
 
   ink_assert(_ua.get_txn()->get_proxy_ssn());
-  ink_assert(_ua.get_txn()->get_proxy_ssn()->accept_options);
+  ink_assert(_ua.get_txn()->get_proxy_ssn()->acceptor);
 
   // default the upstream IP style host resolution order from inbound
-  t_state.my_txn_conf().host_res_data.order = _ua.get_txn()->get_proxy_ssn()->accept_options->host_res_preference;
+  t_state.my_txn_conf().host_res_data.order = _ua.get_txn()->get_proxy_ssn()->acceptor->options().host_res_preference;
 
   start_sub_sm();
 
@@ -4689,28 +4689,6 @@ HttpSM::do_remap_request(bool run_inline)
   bool ret = remapProcessor.setup_for_remap(&t_state, m_remap.get());
 
   check_sni_host();
-
-  // Depending on a variety of factors the HOST field may or may not have been promoted to the
-  // client request URL. The unmapped URL should always have that promotion done. If the HOST field
-  // is not already there, promote it only in the unmapped_url. This avoids breaking any logic that
-  // depends on the lack of promotion in the client request URL.
-  if (!t_state.unmapped_url.m_url_impl->m_ptr_host) {
-    MIMEField *host_field = t_state.hdr_info.client_request.field_find(static_cast<std::string_view>(MIME_FIELD_HOST));
-    if (host_field) {
-      auto host_name{host_field->value_get()};
-      if (!host_name.empty()) {
-        int  port     = 0;
-        bool has_port = false;
-
-        if (http_parse_host_header(host_name, host_name, port, has_port)) {
-          t_state.unmapped_url.host_set(host_name);
-        }
-        if (has_port) {
-          t_state.unmapped_url.port_set(port);
-        }
-      }
-    }
-  }
 
   if (!ret) {
     SMDbg(dbg_ctl_url_rewrite, "Could not find a valid remapping entry for this request");
